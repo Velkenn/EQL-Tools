@@ -75,6 +75,8 @@ img.ic{width:26px;height:26px;vertical-align:middle;margin-right:7px;border:1px 
 #drop{border:2px dashed #3a2f1c;border-radius:6px;margin:14px 12px;padding:22px;text-align:center;color:#8a7d60}
 #drop.on{border-color:#e8c65a;color:#e8c65a}
 .pill{display:inline-block;background:#2c2413;border:1px solid #e8c65a;color:#e8c65a;border-radius:99px;padding:2px 10px;font-size:11px;margin-left:6px}
+.clearbtn{background:transparent;border:1px solid #3a2f1c;color:#8a7d60;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;margin-left:4px}
+.clearbtn:hover{border-color:#c96b5a;color:#c96b5a}
 .plan h3 a{color:#7fd4ff}
 @media(max-width:700px){.s{display:none}}
 </style></head><body>
@@ -96,6 +98,7 @@ img.ic{width:26px;height:26px;vertical-align:middle;margin-right:7px;border:1px 
 <select id="zsel"><option value="">All zones</option></select>
 <label><input type="checkbox" id="zonly" disabled> Only my gaps</label>
 <span id="zchar" class="pill" style="display:none"></span>
+<button id="zclear" class="clearbtn" style="display:none">forget</button>
 </div>
 <div class="f" id="zcharbar">
 <label>Load character:</label>
@@ -110,6 +113,7 @@ img.ic{width:26px;height:26px;vertical-align:middle;margin-right:7px;border:1px 
 <label>Classes:</label>
 <select id="e1" class="cls"></select><select id="e2" class="cls"></select><select id="e3" class="cls"></select>
 <span id="echar" class="pill" style="display:none"></span>
+<button id="eclear" class="clearbtn" style="display:none">forget</button>
 </div>
 <input type="text" id="eq" placeholder="Search effect...">
 <div class="efbar" id="efbar">
@@ -372,13 +376,44 @@ function parseChar(text,fname){
  var guess=CLS.slice().sort(function(a,b){return score[b]-score[a];}).slice(0,3);
  ['z1','z2','z3','e1','e2','e3'].forEach(function(id,ix){
   q(id).value=score[guess[ix%3]]>0?guess[ix%3]:'';});
- CHAR={equipped:equipped,banked:banked,name:fname.replace('.txt','')};
+ CHAR={equipped:equipped,banked:banked,name:fname.replace('.txt',''),text:text};
  q('zchar').textContent=CHAR.name;q('zchar').style.display='';
  q('echar').textContent=CHAR.name;q('echar').style.display='';
+ q('zclear').style.display='';q('eclear').style.display='';
  q('zonly').disabled=false;
  q('zhint').innerHTML='Showing gaps for <b>'+esc(CHAR.name)+'</b>. Drops marked with a gold bar fill an empty socket. Fix the class guess above if it is wrong.';
+ persistChar();
  refreshChar();}
 function refreshChar(){renderZones();renderEffects();}
+// ---- character persistence (this runs on the user's own site; localStorage is
+// fine here, unlike inside a Claude artifact) ----
+function persistChar(){
+ try{ if(!CHAR)return;
+  localStorage.setItem('eqlChar',JSON.stringify({
+   text:CHAR.text,name:CHAR.name,
+   trio:['z1','z2','z3'].map(function(id){return q(id).value;})}));
+ }catch(e){}
+}
+function clearChar(){
+ try{localStorage.removeItem('eqlChar');}catch(e){}
+ CHAR=null;efOpen=null;
+ ['zchar','echar','zclear','eclear'].forEach(function(id){if(q(id))q(id).style.display='none';});
+ ['z1','z2','z3','e1','e2','e3'].forEach(function(id){q(id).value='';});
+ q('zonly').disabled=true;q('zonly').checked=false;
+ if(q('efile'))q('efile').value='';if(q('zfile'))q('zfile').value='';
+ q('zhint').innerHTML='Pick a zone below (or from the dropdown) to see everything that drops there. Optionally load your character (.txt from /outputfile inventory) to mark drops that fill your empty sockets &mdash; parsed in your browser, nothing is uploaded.';
+ q('ehint').style.display='';
+ renderZones();renderEffects();
+}
+function restoreChar(){
+ try{
+  var s=localStorage.getItem('eqlChar'); if(!s)return;
+  var o=JSON.parse(s); if(!o||!o.text)return;
+  parseChar(o.text,(o.name||'character'));
+  if(o.trio){['z1','z2','z3','e1','e2','e3'].forEach(function(id,i){q(id).value=o.trio[i%3]||'';});
+   persistChar();refreshChar();}
+ }catch(e){}
+}
 
 function zoneTrio(){return ['z1','z2','z3'].map(function(id){return q(id).value}).filter(Boolean);}
 
@@ -404,7 +439,17 @@ function rowFills(x,gaps,trio){
   return g;}
  return null;}
 
-['zq','zsel','zonly','z1','z2','z3'].forEach(function(id){q(id).addEventListener('input',renderZones);});
+['zq','zsel','zonly'].forEach(function(id){q(id).addEventListener('input',renderZones);});
+// class selectors sync across both views and save the correction
+function syncTrio(src){
+ var vals=src.map(function(id){return q(id).value;});
+ var other=(src[0].charAt(0)==='z')?['e1','e2','e3']:['z1','z2','z3'];
+ other.forEach(function(id,i){q(id).value=vals[i]||'';});
+ persistChar();renderZones();renderEffects();
+}
+['z1','z2','z3'].forEach(function(id){q(id).addEventListener('change',function(){syncTrio(['z1','z2','z3']);});});
+q('zclear').addEventListener('click',clearChar);
+q('eclear').addEventListener('click',clearChar);
 // clicking a zone name (index) or the back link selects/clears the zone.
 // Bound to the whole view because the back link lives in #zcount, not #zlist.
 q('vZ').addEventListener('click',function(e){
@@ -484,7 +529,8 @@ var efFilter='all',efOpen=null;
 q('efile').addEventListener('change',function(ev){
  var f=ev.target.files[0];if(!f)return;var rd=new FileReader();
  rd.onload=function(){parseChar(String(rd.result),f.name);};rd.readAsText(f);});
-['e1','e2','e3','eq'].forEach(function(id){q(id).addEventListener('input',renderEffects);});
+['eq'].forEach(function(id){q(id).addEventListener('input',renderEffects);});
+['e1','e2','e3'].forEach(function(id){q(id).addEventListener('change',function(){syncTrio(['e1','e2','e3']);});});
 Array.prototype.forEach.call(document.querySelectorAll('#efbar button'),function(b){
  b.onclick=function(){efFilter=b.getAttribute('data-fil');
   Array.prototype.forEach.call(document.querySelectorAll('#efbar button'),function(o){o.className=(o===b)?'on':'';});
@@ -568,6 +614,7 @@ function renderEffects(){
  q('elist').innerHTML=head+h;
 }
 render();
+restoreChar();
 }catch(err){
 document.body.insertAdjacentHTML('afterbegin','<div style="background:#7a1a1a;color:#fff;padding:12px;font:13px monospace;white-space:pre-wrap">ERROR: '+(err&&err.message?err.message:err)+'</div>');
 }
